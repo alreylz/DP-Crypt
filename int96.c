@@ -104,7 +104,103 @@ int96 not (int96 op1){
     int96 out = {.msB = ~(op1.msB), .lsB = ~(op1.lsB) };
     return out;
 }
+bool getBit(int96 toRead, int pos){
 
+    unsigned long maskedValue = 3;
+    if(pos>=96 || pos<0) printf("[Error] getBit pos[%d]\n",pos);
+    else if(pos > 31){ //Look within msB
+        maskedValue = 0UL;
+        //maskedValue |= ( 1UL<< (unsigned long) pos);
+        //maskedValue = toRead.msB & maskedValue;
+        maskedValue = toRead.msB>>(pos-32) & 1UL ;
+    }
+    else if(pos<32 && pos>=0){//Look within lsB
+        maskedValue = 0;
+        // maskedValue |= ((unsigned int) 1<<pos);
+        // maskedValue = (unsigned long) toRead.lsB & maskedValue;
+        maskedValue = toRead.lsB >> pos & 1UL ;
+    }
+
+    if(maskedValue >= 1) return true; // a 1 at position pos
+    else if(maskedValue==0) return false;
+    else{ printf("[Error getBit pos[%d] (Should never happen)\n",pos); return false; }
+
+}
+
+
+/*[OK]*/int96 setBit(int96 * toChange,  int pos, bool value){
+            unsigned long binaryValue = 1 ;
+            unsigned int binaryValueUI = 1;
+            if(pos>=96 || pos<0){ printf("SetBit ERROR\n"); return ones();}
+
+            if(pos<32 && pos>=0){
+                unsigned int mask;
+                
+                if(value == true ){
+                    //printf("MASK to set bit [%d]=1 is %u\n",pos, mask );
+                    mask = ((unsigned int) binaryValueUI<<pos);
+                    toChange->lsB = (toChange->lsB) | mask  ;
+                } 
+                else{ 
+                    mask = ~((unsigned int) binaryValueUI<<pos); 
+                    toChange->lsB = (toChange->lsB) & mask  ;
+                }
+
+            }
+            else if (pos>=32 && pos<96) {   /* FUCKING ERROR IS HERE */
+                unsigned long mask = 0;
+                
+                if(value == true){
+                    mask |=  (unsigned long) (1UL<<(pos-32UL));
+                    unsigned long negMask = ~ mask;
+                    //printf("MASK to set bit [%d]=1 is %016lx , neg=%016lx  \n",pos, mask,negMask );
+                    toChange->msB = ((toChange->msB) & negMask) | mask; 
+                }
+                else{
+                    mask =  (unsigned long) ~(1UL<<(pos-32UL));
+                    //printf("%016lx  (MASK to set bit [%d]=0 ) \n",mask,pos );
+                    //printf("%016lx\n",toChange->msB);
+                    //printf("%016lx\n",mask & toChange->msB);
+                    toChange->msB = toChange->msB & mask; 
+                }
+            }
+            return (*toChange);
+        }
+
+
+
+
+bool rotateBits(int96 * toRotate, int rotation_bits){
+    
+    int96 copy = {.msB = toRotate->msB, .lsB = toRotate->lsB};
+
+    if(rotation_bits>0) // rot -->
+    {
+        //printf("RR (%d bits) \n", rotation_bits);
+        //Traverse copy and reassign data of toRotate
+        for(int bitIt=0; bitIt<SIZE_INT96_b; bitIt++){
+            int newPos = (bitIt-rotation_bits)%SIZE_INT96_b;
+            if(newPos<0) newPos= newPos + SIZE_INT96_b;    
+            //printf("pos0 [%d]=%s ---> pos'[%u]=%s \n",bitIt, getBit(copy,bitIt)? "1":"0" ,newPos, getBit((*toRotate),(unsigned int) newPos)? "1":"0" );
+            setBit(toRotate,newPos,getBit(copy,bitIt));
+        }
+
+    }
+    else if (rotation_bits<0)
+    { //rot <--
+        //printf("RL (%d bits) \n", rotation_bits);
+        //Traverse copy and reassign data of toRotate
+        for(int bitIt=0; bitIt<96; bitIt++){
+            int newPos = (bitIt+abs(rotation_bits)) % 96;
+            while(newPos<0) newPos+=96;
+            newPos = newPos%96;
+            //printf("pos [%d] ---> pos [%d] \n",bitIt,newPos);
+            setBit(toRotate,newPos ,getBit(copy, bitIt));
+        }
+    }
+    return true;
+
+}
 // --------------------------------------------------------
 // ------------------------DEBUG---------------------------
 // --------------------------------------------------------
@@ -228,9 +324,76 @@ void test_int96(bool resultPrints){
     //TEST CASE 7 NOT
     testAssertionPrint("not",int96Equals(not(aaaS),fives), &testID);
 
-    char * assString ;
+    char assString  [20];
     toHexString(aaaS,assString);
-    printf("Printing all As : 0x%s [OK]\n",assString);
+    //printf("Printing all As : 0x%s [OK]\n",assString);
+
+
+    //TEST CASE 8 SET BIT
+    int96 toSetBit = zero();
+    for(int i=0; i<96; i++){
+        setBit(&toSetBit,i,true);
+    }
+    testAssertionPrint("setBit", int96Equals(toSetBit,ones()),&testID);
+    setBit(&toSetBit,32,false);
+    int96 expectedResultSetBits = {0xFFFFFFFFFFFFFFFE, 0xFFFFFFFF};
+    testAssertionPrint("setBit(2) pos 32", int96Equals(toSetBit,expectedResultSetBits),&testID);
+    int96 expectedResultSetBits2 = {.msB = 0xFFFFFFFFFFFFFFFE, .lsB = 0x7FFFFFFF };
+    setBit(&toSetBit,31,false);
+    testAssertionPrint("setBit(3) pos 31", int96Equals(toSetBit,expectedResultSetBits2),&testID);
+    int96 toSetBit2 = ones();
+    bool value = true;
+    for(int i=32; i<63; i++){
+            setBit(&toSetBit2,i,value);
+            if(getBit(toSetBit2,i)!=value){printf("Error pos[%d] written=%s vs intended=%s\n",i,getBit(toSetBit2,i)? "1":"0",value?"1":"0" );}
+            else{
+                //printf(" pos[%d] written=%s vs intended=%s\n",i,getBit(toSetBit2,i)? "1":"0",value?"1":"0" );
+            }
+            if(value==true) value = false;
+            else value = true;
+    
+    }
+    printBits(toSetBit2);
+
+    for(int i=95;i>=0;i--){
+        printf("%s", getBit(toSetBit2,i)?"1":"0");
+    }
+    printf("\n");
+
+    //TEST CASE 9 ROTATE 
+    int96 exampleRot = {.msB = 0x00000000000000FF, .lsB = 0x000000FF};
+    printf("Before Rotation\n");
+    printBits(exampleRot);
+    //Test rotation right
+    int96 exampleAfterRotRight = {.msB = 0xFF00000000000000, .lsB = 0xFF000000};
+    rotateBits(&exampleRot,8);
+    printf("After Rotation\n");
+    printBits(exampleRot);
+    printf("Expected \n");
+    printBits(exampleAfterRotRight);
+    testAssertionPrint("Right rotation (8 bits)",int96Equals(exampleRot, exampleAfterRotRight), &testID);
+    
+
+
+    //Test rotation left
+    int96 exampleAfterRotLeft = {0x000000000000FF00,0x0000FF00};
+    rotateBits(&exampleRot,-8);
+    rotateBits(&exampleRot,-8);
+    testAssertionPrint("Left rotation",int96Equals(exampleRot, exampleAfterRotLeft), &testID);
+    
+    
+    int96 hugeRotation ={0x0000000000000000,0x00000001};
+    int96 hugeRotation2 =  hugeRotation;
+    rotateBits(&hugeRotation,-95);
+    int96 hugeRotationLeftResult ={0x8000000000000000,0x00000000};
+    testAssertionPrint("Huge Left rotation",int96Equals(hugeRotation, hugeRotationLeftResult), &testID);
+    printHex(hugeRotation);
+    rotateBits(&hugeRotation2,95);
+    int96 hugeRotationRightResult ={0x0000000000000000,0x0000002};
+    testAssertionPrint("Huge Right rotation",int96Equals(hugeRotation2, hugeRotationRightResult), &testID);
+    printHex(hugeRotation2);
+    
+
 }
 
 #if TESTING_int96 == 1
@@ -241,74 +404,3 @@ int main(int argc , char ** argv){
 }
 
 #endif 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-//[DOESN'T WORK] Allows to set a byte of a given int96 (0: lsb; 15:msb)
-bool setByteAt( int96 * toModify , char value , unsigned int pos ){
-
-    int intValue = value -'0';
-    //printf("Setting BYTE[%d] if int96 to %d ...\n", pos, intValue);
-    //int96 original = (*toModify);
-  
-
-    if( pos > SIZE_INT96_B ){ //If the user is trying to set a byte that is outside the range [0-MAX]
-        fprintf(stderr, "ERROR: index for replacement is out of bounds %d>%d bytes (int96)\n",pos,SIZE_INT96_B);
-        return false;
-    }
-    else{   
-        if(pos>3){ //If trying to set upper part
-            unsigned long maskedValue = 0 | ( (unsigned long) intValue<< (pos-4)); //Sets a variable with all zeros but new byte set to new value
-            //Clear specific byte and add value
-            toModify->msB = (toModify->msB) & ((unsigned long) 0x00 << (pos-4));
-            toModify->msB |= maskedValue ;
-        }
-        else{
-            unsigned int maskedValue = 0 | ((unsigned int) intValue << pos);
-            //Clear byte
-            toModify->lsB &= 0xFFFFFFFF && ((unsigned long)0x00 << pos) ;
-            toModify->lsB |= maskedValue ; 
-        }
-    }
-    //printf("Value post modification:\n");
-    //printBits((*toModify));
-    return true;
-}
-
-//[INCOMPLETE] Allows to create an int96 providing a text (in order to make initialisation
-// conceptually simple and analogous to a passphrase the user can remember).
-int96 strToInt96(const char * str ){
-
-    int strLenght_B = strlen(str); // Length in bytes 
-    int96 out = zero();
-    //If lenght in bytes (repr. characters in this case) is appropiate (lower than max bytes), convert
-    if( strLenght_B > 0 && strLenght_B < SIZE_INT96_B ){
-        int unusedBytes = SIZE_INT96_B -  strLenght_B ; //The bytes we won't be setting (in case the string is not 96 bytes)
-        for(int byteIt = 0 ; byteIt<strLenght_B; byteIt++){//We convert byte by byte (char by char) letter to numbers
-            //out.msB |= str[byteIt] << ( (sizeof(out.msB)*8)-(unusedBytes*8) )
-
-        }
-    }
-    else{ 
-        printf("Incorrect Int96 value created from %s \n",str);
-    }
-
-    //out.msB =
-
-    return out;
-}
-*/

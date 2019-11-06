@@ -3,7 +3,7 @@
 *   Developed by coredamnwork (https://github.com/coredamnwork)
 */
 #define SIZE_INT96_B 12 //Defines the size in bytes of the custom datatype
-#define SIZE_INT96_b 12*8 //Defomes the size in bits of the custom datatype
+#define SIZE_INT96_b 96 //Defomes the size in bits of the custom datatype
 #define TESTING_int96 0
 typedef struct {
 	unsigned long msB; // size = 8 bytes = 64 bits
@@ -29,11 +29,14 @@ typedef struct {
 /*[OK]*/int96 xorN( unsigned int n , int96 * ops);
 /*[OK]*/int96 or( int96 op1 , int96 op2);
 /*[OK]*/int96 not (int96 op1);
-
+/*[OK]*/bool rotateBits(int96 * toRotate, int rotation_bits);
+/*[OK]*/int96 setBit(int96 * toChange, int pos, bool value);
+/*[OK]*/bool getBit(int96 toRead, int pos);
 // DEBUGGING
 /*[OK]*/void toHexString(int96 toPrint, char out [] );
 /*[OK]*/void printHex(int96 toPrint);
 /*[OK]*/void printBits(int96 toPrint);
 /*[OK]*/bool testAssertionPrint( const char * label, bool condition, int * testID );
+void test_int96(bool resultPrints);
 
 

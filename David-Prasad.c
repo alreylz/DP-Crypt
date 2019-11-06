@@ -11,9 +11,10 @@
 
 #define MAX_EAVESDROPPED 500
 int DP_ROUND_COUNT = 0;
-
+int USE_ROTATE = 0;
 time_t t;
 
+unsigned int hammingDistance(int96 op1,int96 op2);
 //------------------------------------------------
 // DAVID PRASAD'S PROTOCOL (SIMULATION FUNCTIONS)
 //-------------------------------------------------
@@ -125,17 +126,53 @@ bool Init_David_Prasad( int96 ID , int96 PID , int96 PID2, int96 k1, int96 k2, t
 }
 /*[OK]*/int96 sendD(reader * r, tag * t){
     int96 out =  xor(and(r->k1,r->n2),and(r->k2,r->n1));
+    if( USE_ROTATE > 0) rotateBits(&out,(r->n1.lsB));
     r->D = out;
     int96 localD = xor(and(t->k1,t->n2),and(t->k2,t->n1)); // tag computes D locally from previously exchanged parameters
+    if(USE_ROTATE > 0) rotateBits(&localD,(t->n1.lsB));
     t->D = localD;
     //Confirmation that the reader is trustworthy because it knows both the keys and randon numbers
     //testAssertionPrint("sendD; get D'",int96Equals(out,localD),NULL);
     return out;
 }
 /*[OK]*/int96 sendE(tag t, reader * r){
-    int96 out =  xor( xor3(t.k1,t.n1,t.id), and(t.k2,t.n2) ) ;
-    //Reader extracts ID from message
-    r->id = xor3(r->k1, r->n1, xor(out,and(r->k2,r->n2)));
+    int96 out;
+
+    if(USE_ROTATE == 2){ /*BUGGY*/
+        out = xor3(t.k1,t.n1,t.id);
+        rotateBits(&out, -(t.n2.lsB)); //left rotate
+        int96 outPart = and(t.k2,t.n2);
+        rotateBits(&outPart,t.n1.lsB); //right rotate
+        out = xor(out,outPart);
+
+        //Compute rotate(k1 & n2,n1)
+        int96 inPartB = and(r->k2,r->n2);
+        rotateBits(&inPartB, r->n1.lsB);
+        //if(int96Equals(inPartB,outPart)){printf("PrintPart[OK]\n");}
+
+        //Compute rotate(k1 xor n1, n2)
+        int96 localk1N1 = xor(r->k1,r->n1);
+        rotateBits(&localk1N1,-(r->n2.lsB));
+
+        int96 idrotated = xor3(out,localk1N1,inPartB) ;
+        //Obtain id
+        rotateBits(&idrotated,(r->n2.lsB));
+        r->id = idrotated;
+        if(!int96Equals(t.id,r->id)) {
+            char strTid[24];
+            char strRid[24];
+            toHexString(t.id,strTid);
+            toHexString(r->id,strRid);
+            printf("IDs not equal; hd(r->id,t->id) = %d \n\tt.id = 0x%s\n\tr->id= 0x%s\n", hammingDistance(t.id,r->id),strTid,strRid);
+
+        }
+
+    }else{
+        out = xor( xor3(t.k1,t.n1,t.id), and(t.k2,t.n2) ) ;
+        //Reader extracts ID from message
+        r->id = xor3(r->k1, r->n1, xor(out,and(r->k2,r->n2)));
+    }
+    
     //testAssertionPrint("sendE; exchange ID", int96Equals(t.id,r->id), NULL);
     return out;
 }
@@ -479,40 +516,6 @@ bool int96_columnCount( int96 * ops, unsigned int nOps, unsigned int * resultCou
     //printColumnCountVector(resultCount, 666);
     return true;
 }
-
-/*[OK]*/int96 setBit(int96 * toChange, unsigned int pos, bool value){
-            unsigned long binaryValue = 1 ;
-
-            if(pos>=96){ printf("SetBit ERROR\n"); return (*toChange);}
-
-            if(pos<32){
-                unsigned int mask;
-                //printf("MASK to set bit [%d]=1 is %u\n",pos, mask );
-                if(value == true ){
-                    mask = ((unsigned int) binaryValue<<pos);
-                    toChange->lsB = (toChange->lsB) | mask  ;
-                } 
-                else{ 
-                    mask = ~((unsigned int) binaryValue<<pos); 
-                    toChange->lsB = (toChange->lsB) & mask  ;
-                }
-
-            }
-            else if (pos>=32) {   
-                unsigned long mask;
-                if(value == true){
-                    mask =  (unsigned long) (binaryValue<<((unsigned long) pos-(unsigned long)32));
-                    toChange->msB = (toChange->msB) | mask; 
-                }
-                else{
-                    mask =  (unsigned long) ~(binaryValue<<((unsigned long) pos-(unsigned long)32));
-                    toChange->msB = (toChange->msB) & mask; 
-                }
-            }
-            return (*toChange);
-        }
-
-
 /*Computes a global sum for all the eavesdropped sessions provided and 
  * creates the final approximation based on the delta passed as argument */
 int96 bitwiseSumOfSessionApproximations(struct goodApproximations * approximations, unsigned int nEavesdroppedSessions , float deltaThreshold){
@@ -585,8 +588,9 @@ int main(int argc, char ** argv){
     int96 k1 = { 0x3132333435363738 , 0x39313030 }; // K1 = 123456789100
     int96 k2 = { 0x61646d696e61646d, 0x696e3030  }; // K2 = adminadmin00
     /* Obtain the number of sessions to eavesdrop */
-    if(argc<2 || argc>3){ printf("David Prasad's Cryptanalysis requires: <#sessionsToEavesdrop>\n"); return -1;}
+    if(argc<2 || argc>3){ printf("David Prasad's Cryptanalysis requires: <#sessionsToEavesdrop> (<useRotationsFlag(0/1)>)\n"); return -1;}
     unsigned int N_eavesdrop = atoi(argv[1]); 
+    if(argc == 3) USE_ROTATE = atoi(argv[2]);
     if(N_eavesdrop>=MAX_EAVESDROPPED){printf("You asked for too many eavesdropped sessions: <#sessionsToEavesdrop> should be lower than %d",MAX_EAVESDROPPED); return -1;} 
 
     /* We create an array de leaked sessions (to store all the corresponding messages for session "i")*/
@@ -634,12 +638,39 @@ int main(int argc, char ** argv){
     toHexString(k1_finalApprox,k1Apprx_str);
     toHexString(k2_finalApprox,k2Apprx_str);
     // Compare "Approximation" to the actual value using Hamming Distance to obtain number of bits disclosed
-    printf("\nRESULT\nThreshold = %.4f \n\n", thresholdDelta_paramX );
-    printf("[Guessed ID] 0x%s\n[Actual  ID] 0x%s\n\tHamming distance = %u => correctly recovered bits = %u \n\n",idApprx_str,idStr,hammingDistance(myID,id_finalApprox),96-hammingDistance(myID,id_finalApprox));
-    printf("[Guessed k1] 0x%s\n[Actual  k1] 0x%s\n\tHamming distance = %u => correctly recovered bits = %u \n\n",k1Apprx_str,k1Str,hammingDistance(k1,k1_finalApprox),96-hammingDistance(k1,k1_finalApprox));
-    printf("[Guessed k2] 0x%s\n[Actual  k2] 0x%s\n\tHamming distance = %u => correctly recovered bits = %u \n\n",k2Apprx_str,k2Str,hammingDistance(k2,k2_finalApprox),96-hammingDistance(k2,k2_finalApprox));
+    printf("--------------------------------------------------------------------------\n");
+    printf("-----------------CRYPTANALYSIS RESULT-------------------------------------\n");
+    printf("--------------------------------------------------------------------------\n");
+    printf(" #Eavesdropped sessions: %d  \n",N_eavesdrop);
+    switch (USE_ROTATE)
+    {
+        case 0:
+            printf(" Using David-Prasad AS IS \n");
+            break;
+        case 1:
+            printf(" Using MODIFIED David-Prasad %d ROTATION1 (message D ) \n",USE_ROTATE);
+            break;
+        case 2:
+            printf(" Using MODIFIED David-Prasad %d ROTATIONS (messages D and E) \n",USE_ROTATE);
+            break;
+        default : 
+            printf(" Using MODIFIED David-Prasad %d ROTATIONS (messages D and E) \n",USE_ROTATE);
+    }
+    
+    printf(" Threshold = %.4f \n\n", thresholdDelta_paramX);
+    printf(" [Guessed ID] 0x%s\n [Actual  ID] 0x%s\n\tHamming distance = %u => correctly recovered bits = %u \n\n",idApprx_str,idStr,hammingDistance(myID,id_finalApprox),96-hammingDistance(myID,id_finalApprox));
+    printf(" [Guessed k1] 0x%s\n [Actual  k1] 0x%s\n\tHamming distance = %u => correctly recovered bits = %u \n\n",k1Apprx_str,k1Str,hammingDistance(k1,k1_finalApprox),96-hammingDistance(k1,k1_finalApprox));
+    printf(" [Guessed k2] 0x%s\n [Actual  k2] 0x%s\n\tHamming distance = %u => correctly recovered bits = %u \n\n",k2Apprx_str,k2Str,hammingDistance(k2,k2_finalApprox),96-hammingDistance(k2,k2_finalApprox));
+    printf("--------------------------------------------------------------------------\n");
+    printf("--------------------------------------------------------------------------\n");
+    //test_int96(false);
+  
+
 
     return 0;
+
+
+    
 }
 
 /*printf(" size of type:  char %ld byte/s; %ld bits \n",sizeof(char), sizeof(char)*8);
